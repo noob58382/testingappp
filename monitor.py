@@ -1,28 +1,21 @@
 import json
 import os
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
 import requests
+from playwright.sync_api import sync_playwright
 
 
 CONFIG_FILE = "config.json"
 STATE_FILE = "state.json"
 
-APPLE_API = "https://www.apple.com/hk-zh/shop/fulfillment-messages"
+APPLE_SITE = "https://www.apple.com/hk-zh"
+APPLE_BUY_URL = "https://www.apple.com/hk/shop/buy-iphone"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/140.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "zh-HK,zh;q=0.9,en;q=0.8",
-    "Referer": "https://www.apple.com/hk/shop/buy-iphone",
-}
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
 def load_config():
@@ -32,40 +25,45 @@ def load_config():
 
 def load_state():
     if not Path(STATE_FILE).exists():
-        return {
-            "alerted": {}
-        }
+        return {"alerted": {}}
 
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {
-            "alerted": {}
-        }
+        return {"alerted": {}}
 
 
 def save_state(state):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+        json.dump(
+            state,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
 
 
 def send_telegram(message):
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not TELEGRAM_TOKEN:
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN is missing"
+        )
 
-    if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
+    if not TELEGRAM_CHAT_ID:
+        raise RuntimeError(
+            "TELEGRAM_CHAT_ID is missing"
+        )
 
-    if not chat_id:
-        raise RuntimeError("TELEGRAM_CHAT_ID is not set")
-
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TELEGRAM_TOKEN}/sendMessage"
+    )
 
     response = requests.post(
         url,
         json={
-            "chat_id": chat_id,
+            "chat_id": TELEGRAM_CHAT_ID,
             "text": message
         },
         timeout=20
@@ -73,314 +71,302 @@ def send_telegram(message):
 
     response.raise_for_status()
 
-    print("Telegram notification sent successfully.")
+    print("✅ Telegram notification sent.")
 
 
 def get_store_name(store):
     return (
         store.get("storeName")
-        or store.get("storeNameEN")
         or store.get("name")
         or store.get("storeNumber")
-        or "Unknown Apple Store"
+        or "Unknown Store"
     )
 
 
-def get_store_number(store):
-    return (
-        store.get("storeNumber")
-        or store.get("storeId")
-        or store.get("id")
-        or "UNKNOWN"
-    )
-
-
-def is_available_today(part_info):
-    if not isinstance(part_info, dict):
+def is_available_today(part):
+    if not isinstance(part, dict):
         return False
 
     pickup_display = str(
-        part_info.get("pickupDisplay", "")
+        part.get("pickupDisplay", "")
     ).lower()
 
-    store_pick_eligible = part_info.get(
-        "storePickEligible"
-    ) is True
+    eligible = (
+        part.get("storePickEligible")
+        is True
+    )
 
-    pickup_quote = str(
-        part_info.get("storePickupQuote", "")
+    quote = str(
+        part.get("storePickupQuote", "")
     ).lower()
 
     pickup_message = str(
-        part_info.get("pickupMessage", "")
+        part.get("pickupMessage", "")
     ).lower()
 
-    pickup_search_quote = str(
-        part_info.get("pickupSearchQuote", "")
-    ).lower()
-
-    available = (
-        pickup_display == "available"
-        and store_pick_eligible
-    )
-
-    if not available:
-        return False
-
-    today_words = [
-        "today",
-        "今日",
-        "今天"
-    ]
-
-    quote_text = (
-        pickup_quote
+    text = (
+        quote
         + " "
         + pickup_message
-        + " "
-        + pickup_search_quote
     )
 
-    return any(word in quote_text for word in today_words)
+    today = (
+        "today" in text
+        or "今日" in text
+        or "今天" in text
+    )
+
+    return (
+        pickup_display == "available"
+        and eligible
+        and today
+    )
+
+
+def get_pickup_data(page, part_number):
+    print()
+    print("=" * 70)
+    print("Opening Apple Hong Kong Store...")
+    print("=" * 70)
+
+    page.goto(
+        APPLE_BUY_URL,
+        wait_until="domcontentloaded",
+        timeout=60000
+    )
+
+    page.wait_for_timeout(5000)
+
+    print(
+        "Apple page loaded."
+    )
+
+    # The page itself makes the pickup request.
+    # Capture the response generated by Apple.
+    response_data = None
+
+    def handle_response(response):
+        nonlocal response_data
+
+        url = response.url
+
+        if (
+            "pickup-message" in url
+            and response.status == 200
+        ):
+            try:
+                data = response.json()
+
+                if (
+                    isinstance(data, dict)
+                    and "body" in data
+                ):
+                    response_data = data
+
+                    print()
+                    print(
+                        "✅ Captured Apple "
+                        "pickup-message response."
+                    )
+
+            except Exception:
+                pass
+
+    page.on(
+        "response",
+        handle_response
+    )
+
+    # Reload after response listener is installed.
+    page.reload(
+        wait_until="domcontentloaded",
+        timeout=60000
+    )
+
+    page.wait_for_timeout(8000)
+
+    if response_data is None:
+        print()
+        print(
+            "❌ Could not capture "
+            "pickup-message response."
+        )
+
+        return None
+
+    return response_data
 
 
 def extract_stores(data):
-    stores = []
-
-    body = data.get("body", {})
-
-    # Current / newer structure
-    if isinstance(body.get("stores"), list):
-        stores.extend(body["stores"])
-
-    # Older structure
-    content = body.get("content", {})
-
-    pickup_message = content.get(
-        "pickupMessage",
+    body = data.get(
+        "body",
         {}
     )
 
-    if isinstance(
-        pickup_message.get("stores"),
-        list
-    ):
-        stores.extend(
-            pickup_message["stores"]
-        )
-
-    # Another possible structure
-    pickup_message_2 = body.get(
-        "PickupMessage",
-        {}
+    stores = body.get(
+        "stores",
+        []
     )
 
-    if isinstance(
-        pickup_message_2.get("stores"),
+    if not isinstance(
+        stores,
         list
     ):
-        stores.extend(
-            pickup_message_2["stores"]
-        )
+        return []
 
-    # Remove duplicate stores
-    unique = {}
-
-    for store in stores:
-        store_number = get_store_number(store)
-
-        if store_number not in unique:
-            unique[store_number] = store
-
-    return list(unique.values())
-
-
-def request_stock(part_numbers, timeout):
-    params = {
-        "fae": "true",
-        "little": "false",
-        "mts.0": "regular",
-        "mts.1": "sticky",
-        "fts": "true"
-    }
-
-    for index, part_number in enumerate(part_numbers):
-        params[f"parts.{index}"] = part_number
-
-    print()
-    print("Apple API request:")
-    print(APPLE_API)
-
-    try:
-        response = requests.get(
-            APPLE_API,
-            params=params,
-            headers=HEADERS,
-            timeout=timeout
-        )
-    except requests.RequestException as e:
-        print(f"❌ Apple request failed: {e}")
-        return None
-
-    print(f"HTTP status: {response.status_code}")
-
-    if response.status_code != 200:
-        print()
-        print("❌ Apple API did not return HTTP 200.")
-        print(
-            "This is NOT treated as 'out of stock'."
-        )
-
-        if response.status_code in (403, 541):
-            print(
-                "⚠️ Apple Shield / anti-bot protection "
-                "may have blocked this request."
-            )
-
-        return None
-
-    try:
-        return response.json()
-    except ValueError:
-        print("❌ Apple response is not valid JSON.")
-        return None
+    return stores
 
 
 def check_stock(config):
-    timeout = config.get(
-        "timeout_seconds",
-        20
-    )
-
     products = config.get(
         "products",
         []
     )
 
     if not products:
-        print("❌ No products configured.")
-        return []
+        raise RuntimeError(
+            "No products configured."
+        )
 
-    part_numbers = [
-        product["part_number"]
-        for product in products
+    product = products[0]
+
+    part_number = product[
+        "part_number"
     ]
 
-    print()
-    print("=" * 70)
-    print("Checking Apple Hong Kong Store inventory")
-    print("=" * 70)
-
     print(
-        "Products:",
-        ", ".join(part_numbers)
+        f"Product: {part_number}"
     )
 
-    data = request_stock(
-        part_numbers,
-        timeout
-    )
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=True
+        )
+
+        context = browser.new_context(
+            locale="zh-HK",
+            timezone_id="Asia/Hong_Kong",
+            user_agent=(
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/140.0.0.0 "
+                "Safari/537.36"
+            )
+        )
+
+        page = context.new_page()
+
+        data = get_pickup_data(
+            page,
+            part_number
+        )
+
+        browser.close()
 
     if data is None:
         return None
 
-    stores = extract_stores(data)
-
-    print(
-        f"Apple API returned {len(stores)} store(s)."
+    stores = extract_stores(
+        data
     )
 
-    if not stores:
-        print(
-            "⚠️ No stores were found in the response."
-        )
-        return []
+    print()
+    print(
+        f"Apple returned "
+        f"{len(stores)} store(s)."
+    )
 
-    results = []
+    matches = []
 
     for store in stores:
-        store_name = get_store_name(store)
-        store_number = get_store_number(store)
 
-        parts_availability = store.get(
+        store_name = get_store_name(
+            store
+        )
+
+        store_number = store.get(
+            "storeNumber",
+            "UNKNOWN"
+        )
+
+        availability = store.get(
             "partsAvailability",
             {}
         )
 
+        part = availability.get(
+            part_number,
+            {}
+        )
+
+        available = (
+            is_available_today(
+                part
+            )
+        )
+
         print()
         print(
-            f"Store: {store_name} "
+            f"🏪 {store_name} "
             f"({store_number})"
         )
 
-        for product in products:
-            part_number = product[
-                "part_number"
-            ]
-
-            part_info = parts_availability.get(
-                part_number,
-                {}
-            )
-
-            pickup_display = part_info.get(
+        print(
+            "   pickupDisplay:",
+            part.get(
                 "pickupDisplay",
                 "unknown"
             )
+        )
 
-            eligible = part_info.get(
+        print(
+            "   storePickEligible:",
+            part.get(
                 "storePickEligible",
                 False
             )
+        )
 
-            pickup_quote = part_info.get(
+        print(
+            "   storePickupQuote:",
+            part.get(
                 "storePickupQuote",
                 ""
             )
+        )
 
-            available_today = (
-                is_available_today(
-                    part_info
+        print(
+            "   TODAY AVAILABLE:",
+            available
+        )
+
+        if available:
+
+            matches.append({
+                "store_name": store_name,
+                "store_number": store_number,
+                "product_name": product[
+                    "name"
+                ],
+                "part_number": part_number,
+                "pickup_quote": part.get(
+                    "storePickupQuote",
+                    "今日"
+                ),
+                "product_url": product.get(
+                    "product_url",
+                    APPLE_BUY_URL
                 )
-            )
+            })
 
-            print(
-                f"  {product['name']}"
-            )
-            print(
-                f"    pickupDisplay: "
-                f"{pickup_display}"
-            )
-            print(
-                f"    storePickEligible: "
-                f"{eligible}"
-            )
-            print(
-                f"    storePickupQuote: "
-                f"{pickup_quote}"
-            )
-            print(
-                f"    TODAY AVAILABLE: "
-                f"{available_today}"
-            )
-
-            if available_today:
-                results.append({
-                    "store_name": store_name,
-                    "store_number": store_number,
-                    "product_name": product["name"],
-                    "part_number": part_number,
-                    "pickup_quote": pickup_quote,
-                    "product_url": product.get(
-                        "product_url",
-                        ""
-                    )
-                })
-
-    return results
+    return matches
 
 
-def build_telegram_message(matches):
+def build_message(matches):
+
     now = datetime.now().strftime(
         "%H:%M:%S"
     )
@@ -391,181 +377,97 @@ def build_telegram_message(matches):
     ]
 
     for item in matches:
+
         lines.append(
             f"• {item['product_name']} — "
             f"{item['store_name']}"
         )
 
         lines.append(
-            f"  備妥於：{item['pickup_quote'] or '今日'}"
+            f"  備妥於："
+            f"{item['pickup_quote']}"
         )
 
         lines.append("")
 
-    urls = sorted(
-        set(
-            item["product_url"]
-            for item in matches
-            if item.get("product_url")
-        )
+    lines.append(
+        "🔗 "
+        + matches[0]["product_url"]
     )
-
-    if urls:
-        lines.append(
-            "🔗 Apple："
-        )
-
-        for url in urls:
-            lines.append(url)
 
     return "\n".join(lines)
 
 
-def handle_notifications(matches, state):
-    alerted = state.setdefault(
-        "alerted",
-        {}
-    )
-
-    current_keys = set()
-
-    new_matches = []
-
-    for item in matches:
-        key = (
-            f"{item['part_number']}|"
-            f"{item['store_number']}"
-        )
-
-        current_keys.add(key)
-
-        if not alerted.get(key, False):
-            new_matches.append(item)
-
-    if new_matches:
-        message = build_telegram_message(
-            new_matches
-        )
-
-        print()
-        print(
-            "🚨 New stock detected!"
-        )
-
-        print(message)
-
-        send_telegram(message)
-
-        for item in new_matches:
-            key = (
-                f"{item['part_number']}|"
-                f"{item['store_number']}"
-            )
-
-            alerted[key] = True
-
-    # Reset stores that are no longer available.
-    for key in list(alerted.keys()):
-        if key not in current_keys:
-            alerted[key] = False
-
-    save_state(state)
-
-
-def test_stock_logic():
-    print("=" * 70)
-    print("TEST MODE — FAKE APPLE STOCK")
-    print("=" * 70)
-
-    fake_part = {
-        "pickupDisplay": "available",
-        "storePickEligible": True,
-        "storePickupQuote": "Today"
-    }
-
-    print()
-    print("Fake Apple response:")
-    print(fake_part)
-
-    result = is_available_today(
-        fake_part
-    )
-
-    print()
-    print(
-        f"Stock available today: {result}"
-    )
-
-    if result:
-        print(
-            "✅ Stock logic PASSED"
-        )
-
-        message = (
-            "🚨📱 TEST — iPhone 18 Pro 有貨\n\n"
-            "• 512GB 冰川色 — "
-            "TEST Apple Store\n"
-            "  備妥於：今日\n\n"
-            "⚠️ 這是測試通知，不是真實庫存。"
-        )
-
-        send_telegram(message)
-
-        print(
-            "✅ Telegram test sent."
-        )
-
-    else:
-        print(
-            "❌ Stock logic FAILED"
-        )
-
-
 def main():
+
     config = load_config()
 
-    test_mode = os.environ.get(
-        "TEST_STOCK",
-        "false"
-    ).lower() == "true"
+    test_mode = (
+        os.environ.get(
+            "TEST_STOCK",
+            "false"
+        ).lower()
+        == "true"
+    )
 
     if test_mode:
-        test_stock_logic()
+
+        print(
+            "🧪 TEST_STOCK=true"
+        )
+
+        fake = {
+            "pickupDisplay": "available",
+            "storePickEligible": True,
+            "storePickupQuote": "Today"
+        }
+
+        if is_available_today(fake):
+
+            send_telegram(
+                "🚨📱 TEST — iPhone 18 Pro 有貨\n\n"
+                "• 512GB 冰川色 — TEST Apple Store\n"
+                "  備妥於：今日\n\n"
+                "⚠️ 測試通知，並非真實庫存。"
+            )
+
         return
 
-    state = load_state()
+    matches = check_stock(
+        config
+    )
 
-    matches = check_stock(config)
-
-    # VERY IMPORTANT:
-    # API failure is not the same as "out of stock".
     if matches is None:
-        print()
+
         print(
-            "⚠️ Inventory check failed."
+            "❌ Inventory check failed."
         )
+
         print(
-            "No notification state was changed."
+            "No stock conclusion was made."
         )
+
         sys.exit(1)
 
     if not matches:
+
         print()
         print(
-            "No matching today-pickup stock found."
-        )
-
-        # Reset previously alerted stores.
-        handle_notifications(
-            [],
-            state
+            "No matching today-pickup "
+            "stock found."
         )
 
         return
 
-    handle_notifications(
-        matches,
-        state
+    message = build_message(
+        matches
+    )
+
+    print()
+    print(message)
+
+    send_telegram(
+        message
     )
 
 
