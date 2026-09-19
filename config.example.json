@@ -1,8 +1,5 @@
 {
-  "region": "https://www.apple.com/hk",
-  "locations": [
-    "Hong Kong"
-  ],
+  "region": "https://www.apple.com/hk-zh",
   "parts_per_request": 10,
   "timeout_seconds": 20,
   "products": [
