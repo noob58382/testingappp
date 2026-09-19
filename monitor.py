@@ -24,6 +24,11 @@ def test_stock_logic():
 
     print("Stock available:", available)
 
+    if available:
+        message = """🚨📱 TEST — iPhone 18 Pro 有貨
 
-if __name__ == "__main__":
-    test_stock_logic()
+• 512GB 冰川色 — TEST Apple Store (備妥於：今日)
+
+⚠️ 這是測試通知，不是真實庫存。"""
+
+        send_telegram(message)
