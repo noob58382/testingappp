@@ -1,0 +1,52 @@
+name: Apple Store Stock Monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub Actions scheduled jobs are not exact timers and may be delayed.
+    # This runs approximately every 5 minutes.
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create config
+        env:
+          APPLE_CONFIG_JSON: ${{ secrets.APPLE_CONFIG_JSON }}
+        run: |
+          printf '%s' "$APPLE_CONFIG_JSON" > config.json
+
+      - name: Run monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python monitor.py
+
+      - name: Save notification state
+        if: always()
+        run: |
+          if [ -f state.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git diff --cached --quiet || git commit -m "chore: update stock monitor state"
+            git push || true
+          fi
