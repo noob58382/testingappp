@@ -1,0 +1,15 @@
+{
+  "region": "https://www.apple.com/hk",
+  "locations": [
+    "000000"
+  ],
+  "parts_per_request": 10,
+  "timeout_seconds": 20,
+  "products": [
+    {
+      "name": "iPhone 18 Pro 512GB 冰川色",
+      "part_number": "REPLACE_WITH_REAL_PART_NUMBER",
+      "product_url": "https://www.apple.com/hk/shop/buy-iphone"
+    }
+  ]
+}
