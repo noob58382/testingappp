@@ -1,24 +1,29 @@
 import os
 import requests
 
-def send_test_notification():
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+def test_stock_logic():
+    fake_store = {
+        "storeName": "TEST Apple Store",
+        "storeNumber": "TEST001",
+        "partsAvailability": {
+            "TESTPART": {
+                "pickupDisplay": "available",
+                "storePickEligible": True,
+                "storePickupQuote": "Today"
+            }
+        }
+    }
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    part = fake_store["partsAvailability"]["TESTPART"]
 
-    response = requests.post(
-        url,
-        json={
-            "chat_id": chat_id,
-            "text": "🚨📱 Apple Store Stock Monitor 測試通知\n\nTelegram 通知功能正常！"
-        },
-        timeout=20
+    available = (
+        part.get("pickupDisplay") == "available"
+        and part.get("storePickEligible") is True
+        and "today" in part.get("storePickupQuote", "").lower()
     )
 
-    print(response.status_code)
-    print(response.text)
+    print("Stock available:", available)
 
 
 if __name__ == "__main__":
-    send_test_notification()
+    test_stock_logic()
