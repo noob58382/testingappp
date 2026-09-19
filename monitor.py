@@ -164,6 +164,7 @@ def request_pickup_data(
     params = {
         "pl": "true",
         "mts.0": "regular"
+        "location": "Hong Kong"
     }
 
     for index, part_number in enumerate(
