@@ -167,12 +167,9 @@ def request_pickup_data(
         "location": "Hong Kong"
     }
 
-    for index, part_number in enumerate(
-        part_numbers
-    ):
-        params[
-            f"parts.{index}"
-        ] = part_number
+
+    for index, part_number in enumerate(part_numbers):
+        params[f"parts.{index}"] = part_number
 
     query = urlencode(
         params
