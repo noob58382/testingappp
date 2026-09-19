@@ -35,6 +35,10 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: Install Playwright Chromium
+        run: |
+          python -m playwright install --with-deps chromium
+
       - name: Create config
         env:
           APPLE_CONFIG_JSON: ${{ secrets.APPLE_CONFIG_JSON }}
