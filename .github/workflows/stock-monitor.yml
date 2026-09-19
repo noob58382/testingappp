@@ -2,18 +2,25 @@ name: Apple Store Stock Monitor
 
 on:
   workflow_dispatch:
-  schedule:
-    # GitHub Actions scheduled jobs are not exact timers and may be delayed.
-    # This runs approximately every 5 minutes.
-    - cron: "*/5 * * * *"
+    inputs:
+      test_stock:
+        description: "Test fake in-stock notification"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
-permissions:
-  contents: write
+  schedule:
+    - cron: "*/5 * * * *"
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -23,10 +30,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
 
       - name: Create config
         env:
@@ -34,11 +41,13 @@ jobs:
         run: |
           printf '%s' "$APPLE_CONFIG_JSON" > config.json
 
-      - name: Run monitor
+      - name: Run stock monitor
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python monitor.py
+          TEST_STOCK: ${{ github.event.inputs.test_stock || 'false' }}
+        run: |
+          python monitor.py
 
       - name: Save notification state
         if: always()
@@ -46,7 +55,10 @@ jobs:
           if [ -f state.json ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
             git add state.json
-            git diff --cached --quiet || git commit -m "chore: update stock monitor state"
+
+            git diff --cached --quiet || git commit -m "Update stock monitor state"
+
             git push || true
           fi
