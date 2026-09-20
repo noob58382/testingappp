@@ -163,11 +163,10 @@ def request_pickup_data(
 
     params = {
         "pl": "true",
-        "mts.0": "regular"
+        "mts.0": "regular",
         "location": "Hong Kong"
     }
-
-
+    
     for index, part_number in enumerate(part_numbers):
         params[f"parts.{index}"] = part_number
 
@@ -605,6 +604,8 @@ def main():
     print(
         message
     )
+
+    
 
     send_telegram(
         message
