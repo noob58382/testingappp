@@ -11,9 +11,9 @@ on:
         options:
           - "false"
           - "true"
-
+  
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "2-59/5 * * * *"
 
 jobs:
   monitor:
